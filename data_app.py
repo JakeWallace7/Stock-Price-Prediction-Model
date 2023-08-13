@@ -81,10 +81,11 @@ def main():
     go_button = st.button(label="Go")
 
     if go_button:
+        loading_message = st.empty()
+        loading_message.text('Loading... Please wait.')
+
         data = fetch_data(ticker_symbol, start_date)
-
         X, y, scaler = preprocess_data(data)
-
         model = build_model((X.shape[1], 1))
         model.fit(X, y, epochs=50, batch_size=32, verbose=0)
 
@@ -174,6 +175,8 @@ def main():
         st.write(correlation, mean_residual, std_residual)
 
         st.write(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
+
+        loading_message.text('Finished loading!')
 
 
 if __name__ == "__main__":
