@@ -1,10 +1,11 @@
-
 import streamlit as st
 import yfinance as yf
 import numpy as np
 import tensorflow as tf
+from annotated_text import annotated_text
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error, r2_score
 from datetime import timedelta
 import plotly.graph_objects as go
 from datetime import date
@@ -82,7 +83,7 @@ def main():
 
     if go_button:
         loading_message = st.empty()
-        loading_message.text('Loading... Please wait.')
+        loading_message.text('Loading...\nThis can take up to 2 minutes')
 
         data = fetch_data(ticker_symbol, start_date)
         X, y, scaler = preprocess_data(data)
@@ -130,9 +131,7 @@ def main():
         fig.add_trace(go.Scatter(x=future_dates, y=future_predictions,
                       mode='lines+markers', name='Forecasted Stock Price', line=dict(dash='dash')))
         fig.update_layout(title=ticker_symbol + ': Actual, Predicted, and Forecasted Stock Prices',
-                          xaxis_title='Date',
-                          yaxis_title='Stock Price',
-                          xaxis_rangeslider_visible=True)
+                          xaxis_title='Date', yaxis_title='Stock Price', xaxis_rangeslider_visible=True)
 
         st.plotly_chart(fig)
 
@@ -141,6 +140,7 @@ def main():
         fig2.add_trace(go.Histogram(x=data['Returns'], nbinsx=100))
         fig2.update_layout(title='Histogram of Daily Returns',
                            xaxis_title='Return', yaxis_title='Frequency')
+
         st.plotly_chart(fig2)
 
         data['Returns'] = data['Close'].pct_change()
@@ -158,6 +158,57 @@ def main():
 
         st.write(risk_assessment)
 
+        fig3 = go.Figure()
+        fig3.add_trace(go.Scatter(x=data["Close"].iloc[60:], y=predicted_stock_price.ravel(
+        ), mode='markers', name='Predicted vs Actual'))
+        fig3.update_layout(title='Predicted vs Actual Stock Prices',
+                           xaxis_title='Actual Stock Prices', yaxis_title='Predicted Stock Prices')
+        st.plotly_chart(fig3)
+
+        rmse = np.sqrt(mean_squared_error(
+            data["Close"].iloc[60:], predicted_stock_price))
+        if rmse <= 10:
+            rmse_assessment = "pass"
+            rmse_color = "#388E3C"
+        else:
+            rmse_assessment = "fail"
+            rmse_color = "#D32F2F"
+
+        mae = mean_absolute_error(
+            data["Close"].iloc[60:], predicted_stock_price)
+        if mae <= 8:
+            mae_assessment = "pass"
+            mae_color = "#388E3C"
+        else:
+            mae_assessment = "fail"
+            mae_color = "#D32F2F"
+
+        mape = np.mean(np.abs(
+            (data["Close"].iloc[60:] - predicted_stock_price.ravel()) / data["Close"].iloc[60:])) * 100
+        if mape <= 3:
+            mape_assessment = "pass"
+            mape_color = "#388E3C"
+        else:
+            mape_assessment = "fail"
+            mape_color = "#D32F2F"
+
+        r2 = r2_score(data["Close"].iloc[60:], predicted_stock_price)
+        if r2 >= .90:
+            r2_assessment = "pass"
+            r2_color = "#388E3C"
+        else:
+            r2_assessment = "fail"
+            r2_color = "#D32F2F"
+
+        annotated_text("Root Mean Squared Error (RMSE): ",
+                       (f"{rmse:.2f}", f"{rmse_assessment}", f"{rmse_color}"))
+        annotated_text("Mean Absolute Error (MAE): ",
+                       (f"{mae:.2f}", f"{mae_assessment}", f"{mae_color}"))
+        annotated_text("Mean Absolute Percentage Error (MAPE): ",
+                       (f"{mape:.2f}%", f"{mape_assessment}", f"{mape_color}"))
+        annotated_text("Coefficient of Determination (R-Squared): ",
+                       (f"{r2:.2f}", f"{r2_assessment}", f"{r2_color}"))
+
         fig4 = go.Figure()
         fig4.add_trace(go.Scatter(
             x=data["Close"].iloc[60:], y=residuals, mode='markers'))
@@ -165,22 +216,8 @@ def main():
                            xaxis_title='Actual Values', yaxis_title='Residuals')
         st.plotly_chart(fig4)
 
-        rmse = np.sqrt(mean_squared_error(
-            data["Close"].iloc[60:], predicted_stock_price))
-
-        correlation = np.corrcoef(data["Close"].iloc[60:], residuals)[0, 1]
-        mean_residual = np.mean(residuals)
-        std_residual = np.std(residuals)
-
-        st.write(correlation, mean_residual, std_residual)
-
-        st.write(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
-
-        loading_message.text('Finished loading!')
+        loading_message.text('')
 
 
 if __name__ == "__main__":
     main()
-
-
-# streamlit run /Users/jakewallace/VScode/Python/streamlit_apps/data_app.py
