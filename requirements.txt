@@ -1,7 +1,7 @@
-numpy==1.23.5
-plotly==5.15.0
-scikit-learn==1.3.0
-st-annotated-text==4.0.0
-streamlit==1.24.1
-tensorflow==2.6.0
-yfinance==0.2.27
+numpy
+plotly
+scikit-learn
+st-annotated-text
+streamlit
+tensorflow
+yfinance
