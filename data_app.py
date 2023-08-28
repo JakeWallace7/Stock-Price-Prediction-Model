@@ -1,68 +1,75 @@
+
 import streamlit as st
 import yfinance as yf
 import numpy as np
 import tensorflow as tf
 from annotated_text import annotated_text
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from datetime import timedelta
 import plotly.graph_objects as go
 from datetime import date
 
-
-def fetch_data(ticker_symbol, start_date):
-    current_date = date.today()
-    return yf.download(ticker_symbol, start_date, current_date)
+# Fetch stock data from the yfinance API
 
 
-def preprocess_data(data):
-    try:
-        data = data["Close"].values.reshape(-1, 1)
+def getData(ticker, start):
+    today = date.today()
+    return yf.download(ticker, start, today)
 
-        if data.size == 0:
-            raise ValueError(
-                "Data is empty. Cannot proceed with preprocessing.")
-
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        data_scaled = scaler.fit_transform(data)
-
-        X, y = [], []
-        for i in range(60, len(data_scaled)):
-            X.append(data_scaled[i-60:i, 0])
-            y.append(data_scaled[i, 0])
-
-        X, y = np.array(X), np.array(y)
-        X = np.reshape(X, (X.shape[0], X.shape[1], 1))
-
-        return X, y, scaler
-
-    except ValueError as error:
-        st.error(f"An error occurred: {error}")
+# Prepare data for model consumption
 
 
-def build_model(input_shape):
+def processData(data):
+
+    data = data["Close"].values.reshape(-1, 1)
+
+    # scale the data for use by the lstm model
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    dataScaled = scaler.fit_transform(data)
+
+    # apply rolling window of 60 days
+    X, y = [], []
+    for i in range(60, len(dataScaled)):
+        X.append(dataScaled[i-60:i, 0])
+        y.append(dataScaled[i, 0])
+
+    # reshape data for the lstm model
+    X, y = np.array(X), np.array(y)
+    X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+
+    return X, y, scaler
+
+
+# Contructs and return the LSTM model
+
+
+def contructLSTM(input):
     model = tf.keras.Sequential()
     model.add(tf.keras.layers.LSTM(
-        units=50, return_sequences=True, input_shape=input_shape))
+        units=50, return_sequences=True, input_shape=input))
     model.add(tf.keras.layers.LSTM(units=50))
     model.add(tf.keras.layers.Dense(units=1))
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
+# Returns future predictions made by the LSTM model
 
-def predict_future(model, last_known_sequence, scaler, days_to_predict=10):
-    future_predictions = []
 
-    current_sequence = last_known_sequence.copy()
-    for _ in range(days_to_predict):
-        prediction = model.predict(current_sequence.reshape(1, -1, 1))
-        future_predictions.append(scaler.inverse_transform(prediction)[0][0])
+def predictFuture(model, sequence, scaler, days=10):
+    futurePredictions = []
 
-        current_sequence = np.roll(current_sequence, -1)
-        current_sequence[-1] = prediction
+    currentSequence = sequence.copy()
+    for _ in range(days):
+        prediction = model.predict(currentSequence.reshape(1, -1, 1))
+        futurePredictions.append(scaler.inverse_transform(prediction)[0][0])
 
-    return future_predictions
+        currentSequence = np.roll(currentSequence, -1)
+        currentSequence[-1] = prediction
+
+    return futurePredictions
+
+# Main logic for streamlit applicaiton
 
 
 def main():
@@ -71,50 +78,51 @@ def main():
 
     TICKER_OPTIONS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'META']
 
-    ticker_symbol = st.selectbox(
+    tickerSymbol = st.selectbox(
         "Select a stock ticker symbol:", TICKER_OPTIONS)
 
-    start_date = st.date_input(
+    startDate = st.date_input(
         "Select start date for historical data:", date(2020, 1, 1))
 
     N = st.slider(label="Days to Predict", min_value=5, max_value=30, step=5)
 
-    go_button = st.button(label="Go")
+    button = st.button(label="Go")
 
-    if go_button:
-        loading_message = st.empty()
-        loading_message.text('Loading...\nThis can take up to 2 minutes')
+    if button:
+        loadingMessage = st.empty()
+        loadingMessage.text('Loading...\nThis can take up to 2 minutes')
 
-        data = fetch_data(ticker_symbol, start_date)
-        X, y, scaler = preprocess_data(data)
-        model = build_model((X.shape[1], 1))
+        data = getData(tickerSymbol, startDate)
+        X, y, scaler = processData(data)
+        model = contructLSTM((X.shape[1], 1))
         model.fit(X, y, epochs=50, batch_size=32, verbose=0)
 
-        predicted_stock_price = model.predict(X)
-        predicted_stock_price = scaler.inverse_transform(predicted_stock_price)
+        # Predicitons for historical data
+        predictedHistorical = model.predict(X)
+        predictedHistorical = scaler.inverse_transform(predictedHistorical)
         residuals = data["Close"].iloc[60:].values - \
-            predicted_stock_price.ravel()
+            predictedHistorical.ravel()
 
-        future_dates = [data.index[-1] +
-                        timedelta(days=i) for i in range(1, N+1)]
-        future_predictions = predict_future(
-            model, X[-1], scaler, days_to_predict=N)
+        # Predictions for future data
+        predictedFuture = [data.index[-1] +
+                           timedelta(days=i) for i in range(1, N+1)]
+        forecastedPrices = predictFuture(model, X[-1], scaler, days=N)
 
-        price_today = data["Close"].iloc[-1]
-        predicted_change = (
-            (future_predictions[-1] - price_today) / price_today) * 100
+        currentPrice = data["Close"].iloc[-1]
+        change = ((forecastedPrices[-1] - currentPrice) / currentPrice) * 100
 
         st.write("Recommendation:")
 
-        if predicted_change > 5:
+        # Recommendation logic based on forecasted future price
+        if change > 5:
             recommendation = "Strong Buy"
             st.markdown(
                 "<div style='background-color: #388E3C; padding: 10px; border-radius: 10px;'>Strong Buy</div>", unsafe_allow_html=True)
-        elif predicted_change > 2:
+        elif change > 2:
             recommendation = "Buy"
             st.markdown(
                 "<div style='background-color: #4CAF50; padding: 10px; border-radius: 10px;'>Buy</div>", unsafe_allow_html=True)
-        elif predicted_change > -2:
+        elif change > -2:
             recommendation = "Sell"
             st.markdown(
                 "<div style='background-color: #E57373; padding: 10px; border-radius: 10px;'>Sell</div>", unsafe_allow_html=True)
@@ -123,18 +131,20 @@ def main():
             st.markdown(
                 "<div style='background-color: #D32F2F; padding: 10px; border-radius: 10px'>Strong Sell</div>", unsafe_allow_html=True)
 
+        # Current, predicted, and forecasted price graph
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=data.index[60:], y=data["Close"].iloc[60:], mode='lines', name='Actual Stock Price'))
-        fig.add_trace(go.Scatter(x=data.index[60:], y=predicted_stock_price.ravel(
+        fig.add_trace(go.Scatter(x=data.index[60:], y=predictedHistorical.ravel(
         ), mode='lines', name='Predicted Stock Price'))
-        fig.add_trace(go.Scatter(x=future_dates, y=future_predictions,
+        fig.add_trace(go.Scatter(x=predictedFuture, y=forecastedPrices,
                       mode='lines+markers', name='Forecasted Stock Price', line=dict(dash='dash')))
-        fig.update_layout(title=ticker_symbol + ': Actual, Predicted, and Forecasted Stock Prices',
+        fig.update_layout(title=tickerSymbol + ': Actual, Predicted, and Forecasted Stock Prices',
                           xaxis_title='Date', yaxis_title='Stock Price', xaxis_rangeslider_visible=True)
 
         st.plotly_chart(fig)
 
+        # Average daily return histogram
         data['Returns'] = data['Close'].pct_change()
         fig2 = go.Figure()
         fig2.add_trace(go.Histogram(x=data['Returns'], nbinsx=100))
@@ -147,68 +157,76 @@ def main():
 
         clean_returns = data['Returns'].dropna()
 
+        # Volatitlity calculation based on average daily return standard dev.
         volatility = clean_returns.std()
 
         if volatility < 0.025:
-            risk_assessment = "This stock has low volatility and is considered low risk."
+            riskAssessment = "This stock has low volatility and is considered low risk."
         elif volatility < 0.05:
-            risk_assessment = "This stock has medium volatility and is considered to have a moderate risk."
+            riskAssessment = "This stock has medium volatility and is considered to have a moderate risk."
         else:
-            risk_assessment = "This stock has high volatility and is considered high risk."
+            riskAssessment = "This stock has high volatility and is considered high risk."
 
-        st.write(risk_assessment)
+        st.write(riskAssessment)
 
+        # Predicted vs Actual Scatterplot
         fig3 = go.Figure()
-        fig3.add_trace(go.Scatter(x=data["Close"].iloc[60:], y=predicted_stock_price.ravel(
+        fig3.add_trace(go.Scatter(x=data["Close"].iloc[60:], y=predictedHistorical.ravel(
         ), mode='markers', name='Predicted vs Actual'))
         fig3.update_layout(title='Predicted vs Actual Stock Prices',
                            xaxis_title='Actual Stock Prices', yaxis_title='Predicted Stock Prices')
         st.plotly_chart(fig3)
 
+        # Calculate mean square error metric
         rmse = np.sqrt(mean_squared_error(
-            data["Close"].iloc[60:], predicted_stock_price))
+            data["Close"].iloc[60:], predictedHistorical))
         if rmse <= 10:
-            rmse_assessment = "pass"
-            rmse_color = "#388E3C"
+            rmseAssessment = "pass"
+            rmseColor = "#388E3C"
         else:
-            rmse_assessment = "fail"
-            rmse_color = "#D32F2F"
+            rmseAssessment = "fail"
+            rmseColor = "#D32F2F"
 
+        # Calculate mean ablsoute error metric
         mae = mean_absolute_error(
-            data["Close"].iloc[60:], predicted_stock_price)
+            data["Close"].iloc[60:], predictedHistorical)
         if mae <= 8:
-            mae_assessment = "pass"
-            mae_color = "#388E3C"
+            maeAssessment = "pass"
+            maeColor = "#388E3C"
         else:
-            mae_assessment = "fail"
-            mae_color = "#D32F2F"
+            maeAssessment = "fail"
+            maeColor = "#D32F2F"
 
+        # Calculate mean percentage error metric
         mape = np.mean(np.abs(
-            (data["Close"].iloc[60:] - predicted_stock_price.ravel()) / data["Close"].iloc[60:])) * 100
+            (data["Close"].iloc[60:] - predictedHistorical.ravel()) / data["Close"].iloc[60:])) * 100
         if mape <= 3:
-            mape_assessment = "pass"
-            mape_color = "#388E3C"
+            mapeAssessment = "pass"
+            mapeColor = "#388E3C"
         else:
-            mape_assessment = "fail"
-            mape_color = "#D32F2F"
+            mapeAssessment = "fail"
+            mapeColor = "#D32F2F"
 
-        r2 = r2_score(data["Close"].iloc[60:], predicted_stock_price)
+        # Calculate r-squared metric
+        r2 = r2_score(data["Close"].iloc[60:], predictedHistorical)
         if r2 >= .90:
-            r2_assessment = "pass"
-            r2_color = "#388E3C"
+            r2Assessment = "pass"
+            r2Color = "#388E3C"
         else:
-            r2_assessment = "fail"
-            r2_color = "#D32F2F"
+            r2Assessment = "fail"
+            r2Color = "#D32F2F"
 
+        # Set accuracy metrics color and status
         annotated_text("Root Mean Squared Error (RMSE): ",
-                       (f"{rmse:.2f}", f"{rmse_assessment}", f"{rmse_color}"))
+                       (f"{rmse:.2f}", f"{rmseAssessment}", f"{rmseColor}"))
         annotated_text("Mean Absolute Error (MAE): ",
-                       (f"{mae:.2f}", f"{mae_assessment}", f"{mae_color}"))
+                       (f"{mae:.2f}", f"{maeAssessment}", f"{maeColor}"))
         annotated_text("Mean Absolute Percentage Error (MAPE): ",
-                       (f"{mape:.2f}%", f"{mape_assessment}", f"{mape_color}"))
+                       (f"{mape:.2f}%", f"{mapeAssessment}", f"{mapeColor}"))
         annotated_text("Coefficient of Determination (R-Squared): ",
-                       (f"{r2:.2f}", f"{r2_assessment}", f"{r2_color}"))
+                       (f"{r2:.2f}", f"{r2Assessment}", f"{r2Color}"))
 
+        # Actuals vs Residuals scatterplot
         fig4 = go.Figure()
         fig4.add_trace(go.Scatter(
             x=data["Close"].iloc[60:], y=residuals, mode='markers'))
@@ -216,7 +234,8 @@ def main():
                            xaxis_title='Actual Values', yaxis_title='Residuals')
         st.plotly_chart(fig4)
 
-        loading_message.text('')
+        # Set the loading text to an empty string
+        loadingMessage.text('')
 
 
 if __name__ == "__main__":
