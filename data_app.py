@@ -56,7 +56,7 @@ def contructLSTM(input):
 # Returns future predictions made by the LSTM model
 
 
-def predictFuture(model, sequence, scaler, days=10):
+def predictFuture(model, sequence, scaler, days):
     futurePredictions = []
 
     currentSequence = sequence.copy()
